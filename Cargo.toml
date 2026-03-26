@@ -278,6 +278,7 @@ version = "0"
 default-features = false
 features = [
 	"resource",
+	"socket",
 	"user",
 ]
 
@@ -327,7 +328,7 @@ default-features = false
 
 [workspace.dependencies.ruma]
 git = "https://github.com/matrix-construct/ruma"
-rev = "30d063c4503c3b630cdd55eda71a0bc3504518a2"
+rev = "8564227896ed0f20f46eb4d717b7061f4ddd17ae"
 features = [
     "__compat",
     "appservice-api-c",
@@ -359,6 +360,7 @@ features = [
     "unstable-msc4133",
     "unstable-msc4143",
     "unstable-msc4186",
+    "unstable-msc4195",
     "unstable-msc4203", # sending to-device events to appservices 
     "unstable-msc4310",
     "unstable-msc4311",
