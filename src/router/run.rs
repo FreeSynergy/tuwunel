@@ -3,10 +3,9 @@ use std::{
 	time::Duration,
 };
 
-use futures::{FutureExt, pin_mut};
+use futures::{FutureExt, future::join, pin_mut};
 use tuwunel_core::{
-	Error, Result, Server, debug, debug_error, debug_info, error, info,
-	utils::{BoolExt, future::OptionFutureExt},
+	Error, Result, Server, debug, debug_error, debug_info, error, info, utils::BoolExt,
 };
 use tuwunel_service::Services;
 
@@ -30,23 +29,30 @@ pub(crate) async fn run(services: Arc<Services>) -> Result {
 		.runtime()
 		.spawn(signal(server.clone(), handle.clone()));
 
-	let listener = services
+	let non_listener = services
 		.config
 		.listening
-		.then_async(|| {
-			server
-				.runtime()
-				.spawn(serve::serve(services.clone(), handle))
-				.map(|res| res.map_err(Error::from).unwrap_or_else(Err))
-		})
-		.unwrap_or_else_async(|| server.until_shutdown().map(Ok));
+		.is_false()
+		.then_async(|| server.until_shutdown().map(Ok));
+
+	let listener = services.config.listening.then_async(|| {
+		server
+			.runtime()
+			.spawn(serve::serve(services.clone(), handle))
+			.map(|res| res.map_err(Error::from).unwrap_or_else(Err))
+	});
 
 	// Focal point
 	debug!("Running");
-	pin_mut!(listener);
+	pin_mut!(listener, non_listener);
 	let res = tokio::select! {
-		res = &mut listener => res.unwrap_or(Ok(())),
-		res = services.poll() => handle_services_finish(server, res, listener.await),
+		res = join(&mut listener, &mut non_listener) => {
+			res.0.unwrap_or(res.1.unwrap_or(Ok(())))
+		},
+		res = services.poll() => {
+			server.until_shutdown().await;
+			handle_services_finish(server, res, listener.await)
+		},
 	};
 
 	// Join the signal handler before we leave.
@@ -136,7 +142,7 @@ fn handle_services_finish(
 ) -> Result {
 	debug!("Service manager finished: {result:?}");
 
-	if server.running()
+	if server.is_running()
 		&& let Err(e) = server.shutdown()
 	{
 		error!("Failed to send shutdown signal: {e}");

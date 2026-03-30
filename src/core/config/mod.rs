@@ -29,7 +29,7 @@ use self::proxy::ProxyConfig;
 pub use self::{check::check, manager::Manager};
 use crate::{
 	Err, Result, err,
-	utils::{self, string::EMPTY, sys},
+	utils::{self, sys},
 };
 
 /// All the config options for tuwunel.
@@ -2305,6 +2305,12 @@ pub struct Config {
 	#[serde(default)]
 	pub sso_aware_preferred: bool,
 
+	/// Directory containing appservice yaml registration files.
+	///
+	/// default: ""
+	#[serde(default)]
+	pub appservice_dir: Option<PathBuf>,
+
 	// external structure; separate section
 	#[serde(default)]
 	pub blurhashing: BlurhashConfig,
@@ -2517,14 +2523,6 @@ pub struct LdapConfig {
 	/// default: "uid"
 	#[serde(default = "default_ldap_uid_attribute")]
 	pub uid_attribute: String,
-
-	/// Attribute containing the mail of the user.
-	///
-	/// example: "mail"
-	///
-	/// default: "mail"
-	#[serde(default = "default_ldap_mail_attribute")]
-	pub mail_attribute: String,
 
 	/// Attribute containing the distinguished name of the user.
 	///
@@ -3029,6 +3027,10 @@ impl From<AppService> for ruma::api::appservice::Registration {
 	fn from(conf: AppService) -> Self {
 		use ruma::api::appservice::Namespaces;
 
+		let sender_localpart = conf
+			.sender_localpart
+			.unwrap_or_else(|| conf.id.clone());
+
 		Self {
 			id: conf.id,
 			url: conf.url,
@@ -3038,9 +3040,7 @@ impl From<AppService> for ruma::api::appservice::Registration {
 			device_management: conf.device_management,
 			protocols: conf.protocols.into(),
 			rate_limited: conf.rate_limited.into(),
-			sender_localpart: conf
-				.sender_localpart
-				.unwrap_or_else(|| EMPTY.into()),
+			sender_localpart,
 			namespaces: Namespaces {
 				users: conf.users.into_iter().map(Into::into).collect(),
 				aliases: conf.aliases.into_iter().map(Into::into).collect(),
@@ -3527,8 +3527,6 @@ fn default_blurhash_y_component() -> u32 { 3 }
 fn default_ldap_search_filter() -> String { "(objectClass=*)".to_owned() }
 
 fn default_ldap_uid_attribute() -> String { String::from("uid") }
-
-fn default_ldap_mail_attribute() -> String { String::from("mail") }
 
 fn default_ldap_name_attribute() -> String { String::from("givenName") }
 

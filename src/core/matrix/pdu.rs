@@ -13,7 +13,7 @@ use std::cmp::Ordering;
 use ruma::{
 	CanonicalJsonObject, CanonicalJsonValue, EventId, MilliSecondsSinceUnixEpoch, OwnedEventId,
 	OwnedRoomId, OwnedServerName, OwnedUserId, RoomId, UInt, UserId, events::TimelineEventType,
-	room_version_rules::RoomVersionRules,
+	room_version_rules::RoomVersionRules, serde::Raw,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue as RawJsonValue;
@@ -40,7 +40,7 @@ pub struct Pdu {
 	#[serde(rename = "type")]
 	pub kind: TimelineEventType,
 
-	pub content: Box<RawJsonValue>,
+	pub content: Content,
 
 	pub event_id: OwnedEventId,
 
@@ -89,6 +89,11 @@ pub type PrevEvents = SmallVec<[OwnedEventId; 1]>;
 /// debatable whether this could be an ArrayVec but the realistic upper-bound is
 /// too high and non-deterministic in the era of restricted-type rooms.
 pub type AuthEvents = SmallVec<[OwnedEventId; 3]>;
+
+/// Tuned content buffer. This was chosen empirically based on a significantly
+/// high-rate modality in the 96-112B size class reported by jemalloc. With two
+/// additional words (hopefully) for the SmallVec it puts us squarely at 128B.
+pub type Content = Raw<CanonicalJsonObject, 112>;
 
 /// The [maximum size allowed] for a PDU.
 /// [maximum size allowed]: https://spec.matrix.org/latest/client-server-api/#size-limits
@@ -178,7 +183,7 @@ where
 	}
 
 	#[inline]
-	fn content(&self) -> &RawJsonValue { &self.content }
+	fn content(&self) -> &RawJsonValue { self.content.json() }
 
 	#[inline]
 	fn event_id(&self) -> &EventId { &self.event_id }
@@ -249,7 +254,7 @@ where
 	}
 
 	#[inline]
-	fn content(&self) -> &RawJsonValue { &self.content }
+	fn content(&self) -> &RawJsonValue { self.content.json() }
 
 	#[inline]
 	fn event_id(&self) -> &EventId { &self.event_id }

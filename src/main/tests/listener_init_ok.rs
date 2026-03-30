@@ -2,28 +2,30 @@
 #![allow(unused_features)] // 1.96.0-nightly 2026-03-07 bug
 
 use insta::{assert_debug_snapshot, with_settings};
-use tracing::Level;
+use tokio::{
+	select,
+	time::{Duration, sleep},
+};
 use tuwunel::{Args, Runtime, Server};
-use tuwunel_core::{Result, utils::result::ErrLog};
+use tuwunel_core::{Err, Result};
 
 #[test]
-fn smoke_shutdown() -> Result {
+fn listener_init_ok() -> Result {
 	with_settings!({
-		description => "Smoke Shutdown",
-		snapshot_suffix => "smoke_shutdown",
+		description => "Listener Initialization Ok",
+		snapshot_suffix => "listener_init_ok",
 	}, {
 		let args = Args::default_test(&["fresh", "cleanup"]);
+
 		let runtime = Runtime::new(Some(&args))?;
 		let server = Server::new(Some(&args), Some(&runtime))?;
 		let result = runtime.block_on(async {
-			tuwunel::async_start(&server).await?;
-			let run = tuwunel::async_run(&server);
-			server.server.shutdown().log_err(Level::WARN).ok();
-			run.await?;
-			tuwunel::async_stop(&server).await
+			select! {
+				() = sleep(Duration::from_secs(5)) => Ok(()),
+				_ = tuwunel::async_exec(&server) => Err!("Premature server shutdown"),
+			}
 		});
 
-		drop(runtime);
 		assert_debug_snapshot!(result);
 		result
 	})
