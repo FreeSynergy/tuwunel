@@ -1805,7 +1805,18 @@
 # - "smoke" performs a shutdown after startup admin commands rather than
 #   hanging on client handling.
 #
-#test = []
+#test = false
+
+# Indicates the server has started in maintenance mode. Historically
+# maintenance mode has been enabled by the command line argument
+# `--maintenance` which then sets various configuration items such as
+# `listening=false` among others. That is still the case. This option was
+# only added as a single source of truth that `--maintenance` mode is
+# active.
+#
+# This option must never be set manually.
+#
+#maintenance = false
 
 # Controls whether admin room notices like account registrations, password
 # changes, account deactivations, room directory publications, etc will be
@@ -2545,6 +2556,11 @@
 #
 #delete_empty_directories = true
 
+# Enables checks performed at startup determining the usability of the
+# local directory. Failures will abort the server's startup.
+#
+#startup_check = true
+
 
 
 #[global.storage_provider.<ID>.S3]
@@ -2555,22 +2571,20 @@
 #
 #url =
 
-# (required) The name of the S3 bucket. e.g.
-# "bucketname-123456789-us-west-2-an".
+# The name of the S3 bucket. e.g. "bucketname-123456789-us-west-2-an".
 #
 #bucket =
 
-# (required) The region of the S3 bucket. e.g. "us-west-2".
+# The region of the S3 bucket. e.g. "us-west-2".
 #
 #region = "us-east-1"
 
-# (required) Your amazon IAM Key ID with access granted to this bucket.
+# Your amazon IAM Key ID with access granted to this bucket.
 # e.g. "ABCDEFG1X1ZZYYXXWWVV"
 #
 #key =
 
-# (required) The secret key component which is approx 40 characters of
-# base64.
+# The secret key component which is approx 40 characters of base64.
 #
 #secret =
 
@@ -2613,6 +2627,17 @@
 # (developer_use) Allows disabling request payload signatures.
 #
 #use_payload_signatures = true
+
+# (developer use) Enables checks performed at startup such as pinging the
+# provider. Failures are considered critical startup errors which abort
+# startup. When set to false, faulty providers are only discovered with
+# first use and will not be fatal errors.
+#
+# Only set this to false if you expect a provider to be down at startup or
+# for development/testing purposes; checks are disabled when the server
+# is started in '--maintenance' mode.
+#
+#startup_check = true
 
 
 
