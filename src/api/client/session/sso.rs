@@ -1,3 +1,5 @@
+mod uiaa;
+
 use std::{borrow::Cow, net::IpAddr, time::Duration};
 
 use axum::extract::State;
@@ -8,7 +10,10 @@ use futures::{FutureExt, StreamExt, TryFutureExt, future::try_join};
 use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use ruma::{
 	Mxc, OwnedMxcUri, OwnedRoomId, OwnedUserId, ServerName, UserId,
-	api::client::session::{sso_callback, sso_login, sso_login_with_provider},
+	api::client::{
+		session::{sso_callback, sso_login, sso_login_with_provider},
+		uiaa::AuthType,
+	},
 };
 use serde::{Deserialize, Serialize};
 use tuwunel_core::{
@@ -38,6 +43,7 @@ use tuwunel_service::{
 };
 use url::Url;
 
+pub(crate) use self::uiaa::sso_fallback_route;
 use super::TOKEN_LENGTH;
 use crate::Ruma;
 
@@ -87,17 +93,12 @@ pub(crate) async fn sso_login_route(
 		)));
 	}
 
-	let default_idp_id = services
-		.config
-		.identity_provider
-		.values()
-		.find(|idp| idp.default)
-		.or_else(|| services.config.identity_provider.values().next())
-		.map(IdentityProvider::id)
-		.map(ToOwned::to_owned)
-		.unwrap_or_default();
-
 	let redirect_url = body.body.redirect_url;
+	let default_idp_id = services
+		.oauth
+		.providers
+		.get_default_id()
+		.unwrap_or_default();
 
 	handle_sso_login(&services, &client, default_idp_id, redirect_url, None)
 		.map_ok(|response| sso_login::v3::Response {
@@ -422,6 +423,42 @@ pub(crate) async fn sso_callback_route(
 		.build()
 		.to_string()
 		.into();
+
+	if let Some(ref redirect_url) = session.redirect_url
+		&& redirect_url.scheme() == "uiaa"
+	{
+		let uiaa_session_id = redirect_url.path();
+
+		// Find the UIAA session by its ID
+		let (db_user_id, device_id, mut uiaainfo) = services
+			.uiaa
+			.get_uiaa_session_by_session_id(uiaa_session_id)
+			.await
+			.ok_or_else(|| err!(Request(Forbidden("UIAA session not found."))))?;
+
+		// SECURITY: Ensure the user authenticating via SSO is the owner of the UIAA
+		// session
+		if db_user_id != user_id {
+			return Err!(Request(Forbidden("UIAA session belongs to a different user.")));
+		}
+
+		// Mark the SSO step as completed
+		if !uiaainfo.completed.contains(&AuthType::Sso) {
+			uiaainfo.completed.push(AuthType::Sso);
+			services.uiaa.update_uiaa_session(
+				&user_id,
+				&device_id,
+				uiaa_session_id,
+				Some(&uiaainfo),
+			);
+		}
+
+		// Redirect back to the fallback page to render the success HTML
+		let location =
+			format!("/_matrix/client/v3/auth/m.login.sso/fallback/web?session={uiaa_session_id}");
+
+		return Ok(sso_callback::unstable::Response { location, cookie: Some(cookie) });
+	}
 
 	// Determine the next provider to chain after this one.
 	let next_idp_url = services
