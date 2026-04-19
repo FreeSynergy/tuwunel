@@ -14,8 +14,11 @@ use tuwunel_core::{
 	config::StorageProvider,
 	debug,
 	derivative::Derivative,
-	err, error, implement, info, trace,
-	utils::stream::{IterStream, TryReadyExt},
+	err, error, extract_variant, implement, info, trace,
+	utils::{
+		result::FlatOk,
+		stream::{IterStream, TryReadyExt},
+	},
 };
 
 #[derive(Derivative)]
@@ -66,6 +69,52 @@ async fn startup_check(self: &Arc<Self>) -> Result {
 		.await
 }
 
+/// Put object into store from streaming input.
+///
+/// Recommended to know the total size of the object. If size is `None`,
+/// multi-part upload may be selected even for small uploads below the
+/// configured threshold.
+#[implement(Provider)]
+#[tracing::instrument(
+	level = "debug",
+	err(level = "debug"),
+	skip_all,
+	fields(
+		provider = %self.name,
+		?path,
+		?size,
+	)
+)]
+pub async fn put<S, T>(&self, path: &str, size: Option<usize>, input: S) -> Result<PutResult>
+where
+	S: Stream<Item = Result<T>> + Send,
+	PutPayload: From<T> + From<PutPayload>,
+{
+	if size.is_none_or(|size| size >= self.multipart_threshold()) {
+		return self.put_multi(path, input).await;
+	}
+
+	debug!(
+		?size,
+		threshold = ?self.multipart_threshold(),
+		"Selecting single-part upload..."
+	);
+
+	let payload: PutPayload = input
+		.map_ok(PutPayload::from)
+		.try_collect::<Vec<_>>()
+		.await?
+		.into_iter()
+		.map(Bytes::from)
+		.collect();
+
+	self.put_single(path, payload).await
+}
+
+/// Put object into the store from contiguous input.
+///
+/// The size of input will be determined and multipart upload will be chosen as
+/// necessary internally.
 #[implement(Provider)]
 #[tracing::instrument(
 	level = "debug",
@@ -76,10 +125,41 @@ async fn startup_check(self: &Arc<Self>) -> Result {
 		?path,
 	)
 )]
-pub async fn store<S, T>(&self, path: &str, input: S) -> Result<PutResult>
+pub async fn put_one<T>(&self, path: &str, input: T) -> Result<PutResult>
+where
+	PutPayload: From<T> + From<PutPayload>,
+{
+	let payload: PutPayload = input.into();
+
+	if payload.content_length() < self.multipart_threshold() {
+		return self.put_single(path, payload).await;
+	}
+
+	debug!(
+		len = ?payload.content_length(),
+		threshold = ?self.multipart_threshold(),
+		"Selecting multi-part upload..."
+	);
+
+	self.put_multi(path, once(payload).try_stream())
+		.await
+}
+
+/// Put object into the store from streaming input using multipart upload.
+#[implement(Provider)]
+#[tracing::instrument(
+	level = "debug",
+	err(level = "debug"),
+	skip_all,
+	fields(
+		provider = %self.name,
+		?path,
+	)
+)]
+async fn put_multi<S, T>(&self, path: &str, input: S) -> Result<PutResult>
 where
 	S: Stream<Item = Result<T>> + Send,
-	PutPayload: From<T>,
+	PutPayload: From<T> + From<PutPayload>,
 {
 	let path = self.to_abs_path(path)?;
 	let mut handle = self
@@ -114,6 +194,7 @@ where
 	}
 }
 
+/// Put object into the store from contiguous input non-multipart upload.
 #[implement(Provider)]
 #[tracing::instrument(
 	level = "debug",
@@ -124,20 +205,24 @@ where
 		?path,
 	)
 )]
-pub async fn put<T>(&self, path: &str, input: T) -> Result<PutResult>
-where
-	PutPayload: From<T>,
-{
+async fn put_single(&self, path: &str, input: PutPayload) -> Result<PutResult> {
 	let path = self.to_abs_path(path)?;
 
 	self.provider
-		.put(&path, input.into())
+		.put(&path, input)
 		.map_err(Error::from)
 		.await
 }
 
 #[implement(Provider)]
-#[tracing::instrument(level = "debug", skip_all)]
+#[tracing::instrument(
+	level = "debug",
+	skip_all,
+	fields(
+		provider = %self.name,
+		?path,
+	)
+)]
 pub fn fetch_with_metadata(
 	&self,
 	path: &str,
@@ -157,7 +242,14 @@ pub fn fetch_with_metadata(
 }
 
 #[implement(Provider)]
-#[tracing::instrument(level = "debug", skip_all)]
+#[tracing::instrument(
+	level = "debug",
+	skip_all,
+	fields(
+		provider = %self.name,
+		?path,
+	)
+)]
 pub fn fetch(&self, path: &str) -> impl Stream<Item = Result<FetchItem>> + Send {
 	self.load(path)
 		.map_ok(|result| {
@@ -174,7 +266,15 @@ pub fn fetch(&self, path: &str) -> impl Stream<Item = Result<FetchItem>> + Send 
 }
 
 #[implement(Provider)]
-#[tracing::instrument(level = "debug", err(level = "debug"), skip_all)]
+#[tracing::instrument(
+	level = "debug",
+	err(level = "debug"),
+	skip_all,
+	fields(
+		provider = %self.name,
+		?path,
+	)
+)]
 pub async fn get(&self, path: &str) -> Result<Bytes> {
 	self.load(path)
 		.map_ok(GetResult::bytes)
@@ -338,7 +438,7 @@ pub async fn head(&self, path: &str) -> Result<ObjectMeta> {
 #[implement(Provider)]
 #[tracing::instrument(
 	level = "debug",
-	err(level = "debug"),
+	err(level = "error"),
 	skip_all,
 	fields(
 		provider = %self.name,
@@ -378,4 +478,13 @@ fn to_abs_path(&self, location: &str) -> Result<Path> {
 	);
 
 	Ok(path)
+}
+
+#[implement(Provider)]
+fn multipart_threshold(&self) -> usize {
+	extract_variant!(&self.config, StorageProvider::s3)
+		.map(|config| config.multipart_threshold.as_u64())
+		.map(TryInto::try_into)
+		.flat_ok()
+		.unwrap_or_default()
 }

@@ -2042,6 +2042,40 @@
 #
 #appservice_dir = ""
 
+# Skip database migration on startup. This option is intended for
+# developer debugging and testing only. Never set this option to false
+# unless you have been instructed to do so. Setting this option to false
+# may cause permanent damage and permanent loss of data.
+#
+# Any new database migrations will not be applied on startup, and the
+# database schema version will not be adjusted. These migrations and
+# schema changes may be expected by the current codebase but may not be
+# available when this option is set to false.
+#
+# Setting this option to false will have no effect if no new migrations
+# are to be applied. New migrations are applied once during any execution
+# where this option is set to true (which is the default).
+#
+#database_migrations = true
+
+# Force the database to set its version to the current version known to
+# the executable.
+#
+# - When the discovered version is less than the current version any
+#   migrations are applied normally.
+# - When the discovered version is equal to the current version,
+#   unversioned migrations are applied normally.
+# - When the discovered database version is greater than the current
+#   version, one-time migrations are applied normally and the discoverable
+#   version is regressed back to the current version.
+#
+# This option extremely dangerous and intended for developer debugging and
+# testing only. Never set this option unless you have been instructed to
+# do so. Setting this option may cause permanent damage and permanent loss
+# of data.
+#
+#force_migration = false
+
 
 
 #[global.tls]
@@ -2567,7 +2601,7 @@
 
 
 
-#[global.storage_provider.<ID>.S3]
+#[global.storage_provider.<ID>.s3]
 
 # Supply an s3 URL e.g. "s3://<bucket>/<path>". These URLs may contain one
 # or all of `bucket`, `region`, and `path` . When not supplied, such
@@ -2618,6 +2652,14 @@
 # (expert use) When configured for the bucket it should be reflected here.
 #
 #use_bucket_key =
+
+# (expert use) Threshold size for switching to Multi-part uploads. This is
+# a quirk of the S3 protocol which requires us to use a different approach
+# for "large" uploads. This value determines what a "large" upload is. The
+# default value should be sufficient for most providers. The value is a
+# parsed string allowing SI or IEC units for convenience.
+#
+#multipart_threshold = 100 MiB
 
 # (developer use) Allows relaxing default requirement forcing HTTPS.
 #

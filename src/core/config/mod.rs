@@ -11,6 +11,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
+use bytesize::ByteSize;
 use either::{Either, Either::Left};
 use figment::providers::{Data, Env, Format, Toml};
 pub use figment::{Figment, value::Value as FigmentValue};
@@ -2387,6 +2388,40 @@ pub struct Config {
 	#[serde(default)]
 	pub appservice_dir: Option<PathBuf>,
 
+	/// Skip database migration on startup. This option is intended for
+	/// developer debugging and testing only. Never set this option to false
+	/// unless you have been instructed to do so. Setting this option to false
+	/// may cause permanent damage and permanent loss of data.
+	///
+	/// Any new database migrations will not be applied on startup, and the
+	/// database schema version will not be adjusted. These migrations and
+	/// schema changes may be expected by the current codebase but may not be
+	/// available when this option is set to false.
+	///
+	/// Setting this option to false will have no effect if no new migrations
+	/// are to be applied. New migrations are applied once during any execution
+	/// where this option is set to true (which is the default).
+	#[serde(default = "true_fn")]
+	pub database_migrations: bool,
+
+	/// Force the database to set its version to the current version known to
+	/// the executable.
+	///
+	/// - When the discovered version is less than the current version any
+	///   migrations are applied normally.
+	/// - When the discovered version is equal to the current version,
+	///   unversioned migrations are applied normally.
+	/// - When the discovered database version is greater than the current
+	///   version, one-time migrations are applied normally and the discoverable
+	///   version is regressed back to the current version.
+	///
+	/// This option extremely dangerous and intended for developer debugging and
+	/// testing only. Never set this option unless you have been instructed to
+	/// do so. Setting this option may cause permanent damage and permanent loss
+	/// of data.
+	#[serde(default)]
+	pub force_migration: bool,
+
 	// external structure; separate section
 	#[serde(default)]
 	pub blurhashing: BlurhashConfig,
@@ -2990,7 +3025,9 @@ impl IdentityProvider {
 pub enum StorageProvider {
 	#[expect(non_camel_case_types)]
 	local(StorageProviderLocal),
-	S3(StorageProviderS3),
+	#[expect(non_camel_case_types)]
+	#[serde(rename = "s3", alias = "S3")]
+	s3(StorageProviderS3),
 	#[default]
 	None,
 }
@@ -3029,7 +3066,7 @@ pub struct StorageProviderLocal {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[config_example_generator(
 	filename = "tuwunel-example.toml",
-	section = "global.storage_provider.<ID>.S3"
+	section = "global.storage_provider.<ID>.s3"
 )]
 pub struct StorageProviderS3 {
 	/// Supply an s3 URL e.g. "s3://<bucket>/<path>". These URLs may contain one
@@ -3084,6 +3121,16 @@ pub struct StorageProviderS3 {
 
 	/// (expert use) When configured for the bucket it should be reflected here.
 	pub use_bucket_key: Option<bool>,
+
+	/// (expert use) Threshold size for switching to Multi-part uploads. This is
+	/// a quirk of the S3 protocol which requires us to use a different approach
+	/// for "large" uploads. This value determines what a "large" upload is. The
+	/// default value should be sufficient for most providers. The value is a
+	/// parsed string allowing SI or IEC units for convenience.
+	///
+	/// default: 100 MiB
+	#[serde(default = "default_multipart_threshold")]
+	pub multipart_threshold: ByteSize,
 
 	/// (developer use) Allows relaxing default requirement forcing HTTPS.
 	///
@@ -3670,3 +3717,5 @@ fn default_sso_grant_session_duration() -> Option<u64> { Some(300) }
 fn default_redaction_retention_seconds() -> u64 { 5_184_000 }
 
 fn default_media_storage_providers() -> BTreeSet<String> { ["media".to_owned()].into() }
+
+fn default_multipart_threshold() -> ByteSize { ByteSize::mib(100) }

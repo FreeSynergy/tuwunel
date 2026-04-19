@@ -108,6 +108,8 @@ version = "1.11"
 
 [workspace.dependencies.bytesize]
 version = "2.3"
+default-features = false
+features = ["serde", "std"]
 
 [workspace.dependencies.cargo_toml]
 version = "0.22"
@@ -287,6 +289,9 @@ features = [
 	"socket",
 	"user",
 ]
+
+[workspace.dependencies.num_cpus]
+version = "1"
 
 [workspace.dependencies.num-traits]
 version = "0.2"
