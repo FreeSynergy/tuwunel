@@ -3,34 +3,61 @@ use std::time::{Duration, SystemTime};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as b64};
 use ruma::OwnedUserId;
 use serde::{Deserialize, Serialize};
-use tuwunel_core::{Err, Result, err, implement, utils};
+use tuwunel_core::{Err, Result, err, implement, utils, utils::hash::sha256};
 use tuwunel_database::{Cbor, Deserialized};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AuthRequest {
 	pub client_id: String,
+
 	pub redirect_uri: String,
+
 	pub scope: String,
+
 	pub state: Option<String>,
+
 	pub nonce: Option<String>,
+
 	pub code_challenge: Option<String>,
+
 	pub code_challenge_method: Option<String>,
+
+	/// The identity provider ID used to authenticate the user for this
+	/// authorization request. Stored so it can be propagated to the device
+	/// at token exchange time and used for UIAA SSO provider binding.
+	pub idp_id: Option<String>,
+
 	pub created_at: SystemTime,
+
 	pub expires_at: SystemTime,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AuthCodeSession {
 	pub code: String,
+
 	pub client_id: String,
+
 	pub redirect_uri: String,
+
 	pub scope: String,
+
 	pub state: Option<String>,
+
 	pub nonce: Option<String>,
+
 	pub code_challenge: Option<String>,
+
 	pub code_challenge_method: Option<String>,
+
 	pub user_id: OwnedUserId,
+
+	/// Propagated from the originating AuthRequest; identifies which IdP
+	/// authenticated the user so the device can be tagged at token exchange.
+	pub idp_id: Option<String>,
+
 	pub created_at: SystemTime,
+
 	pub expires_at: SystemTime,
 }
 
@@ -53,6 +80,7 @@ pub fn create_auth_code(&self, auth_req: &AuthRequest, user_id: OwnedUserId) -> 
 		code_challenge: auth_req.code_challenge.clone(),
 		code_challenge_method: auth_req.code_challenge_method.clone(),
 		user_id,
+		idp_id: auth_req.idp_id.clone(),
 		created_at: now,
 		expires_at: now.checked_add(AUTH_CODE_LIFETIME).unwrap_or(now),
 	};
@@ -135,12 +163,10 @@ pub async fn exchange_auth_code(
 		.as_deref()
 		.unwrap_or("S256");
 
+	// Only S256 is advertised in discovery metadata; reject plain to avoid
+	// downgrade attacks (plain challenge == verifier, trivially intercepted).
 	let computed = match method {
-		| "plain" => verifier.to_owned(),
-		| "S256" => {
-			let hash = utils::hash::sha256::hash(verifier.as_bytes());
-			b64.encode(hash)
-		},
+		| "S256" => b64.encode(sha256::hash(verifier.as_bytes())),
 		| _ => return Err!(Request(InvalidParam("Unsupported code_challenge_method"))),
 	};
 
